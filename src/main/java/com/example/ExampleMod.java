@@ -1,14 +1,14 @@
-package net.fabricmc.example;
+package com.example;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
-import net.minecraft.registry.Registries;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.sounds.SoundSource;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -26,8 +26,8 @@ public class ExampleMod implements ClientModInitializer {
         loadConfig();
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (client.world != null && client.player != null) {
-                long currentDay = client.world.getTimeOfDay() / 24000;
+            if (client.level != null && client.player != null) {
+                long currentDay = client.level.getDayTime() / 24000;
 
                 if (lastDay == -1) {
                     lastDay = currentDay;
@@ -38,46 +38,43 @@ public class ExampleMod implements ClientModInitializer {
                     lastDay = currentDay;
                     triggerDayNotification(client, currentDay);
                 }
-            }
-        });
 
-        HudRenderCallback.EVENT.register((drawContext, tickDelta) -> {
-            MinecraftClient client = MinecraftClient.getInstance();
-            if (client.world != null && client.player != null && !client.options.hudHidden) {
-                long currentDay = client.world.getTimeOfDay() / 24000;
+                // Persistent Action Bar Tracker (Displays safely right above your hotbar)
                 String trackerText = "Day: " + currentDay + " / " + goalDay;
-                int color = (currentDay >= goalDay) ? 0x55FF55 : 0xFFAA00;
-                drawContext.drawText(client.textRenderer, trackerText, 10, 10, color, true);
+                ChatFormatting color = (currentDay >= goalDay) ? ChatFormatting.GREEN : ChatFormatting.GOLD;
+                client.player.displayClientMessage(Component.literal(trackerText).withStyle(color), true);
             }
         });
     }
 
-    private void triggerDayNotification(MinecraftClient client, long day) {
-        Text titleText;
-        Text subtitleText;
+    private void triggerDayNotification(Minecraft client, long day) {
+        Component titleText;
+        Component subtitleText;
         String soundToPlay = normalSoundId;
 
         if (day == goalDay) {
-            titleText = Text.literal("GOAL REACHED!").formatted(Formatting.RED, Formatting.BOLD, Formatting.OBFUSCATED);
-            subtitleText = Text.literal("You hit Day " + goalDay + "!").formatted(Formatting.GOLD, Formatting.BOLD);
+            titleText = Component.literal("GOAL REACHED!").withStyle(ChatFormatting.RED, ChatFormatting.BOLD, ChatFormatting.OBFUSCATED);
+            subtitleText = Component.literal("You hit Day " + goalDay + "!").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD);
             soundToPlay = milestoneSoundId;
         } else {
-            titleText = Text.literal("Day " + day).formatted(Formatting.GOLD);
-            subtitleText = Text.literal("Keep surviving...").formatted(Formatting.GRAY);
+            titleText = Component.literal("Day " + day).withStyle(ChatFormatting.GOLD);
+            subtitleText = Component.literal("Keep surviving...").withStyle(ChatFormatting.GRAY);
         }
 
-        client.inGameHud.setTitle(titleText);
-        client.inGameHud.setSubtitle(subtitleText);
-        client.inGameHud.setTitleTicks(10, 70, 20);
+        if (client.gui != null) {
+            client.gui.setTitle(titleText);
+            client.gui.setSubtitle(subtitleText);
+            client.gui.setTimes(10, 70, 20);
+        }
 
         try {
-            client.world.playSound(
+            client.level.playLocalSound(
                 client.player.getX(), client.player.getY(), client.player.getZ(),
-                Registries.SOUND_EVENT.get(Identifier.of(soundToPlay)),
-                net.minecraft.sound.SoundCategory.AMBIENT, 1.0f, 1.0f, false
+                BuiltInRegistries.SOUND_EVENT.get(ResourceLocation.tryParse(soundToPlay)),
+                SoundSource.AMBIENT, 1.0f, 1.0f, false
             );
         } catch (Exception e) {
-            client.player.sendMessage(Text.literal("Invalid custom sound ID in config!").formatted(Formatting.RED), false);
+            client.player.displayClientMessage(Component.literal("Invalid custom sound ID in config!").withStyle(ChatFormatting.RED), false);
         }
     }
 
