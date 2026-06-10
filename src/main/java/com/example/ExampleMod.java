@@ -1,53 +1,64 @@
 package com.example;
 
-import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.Minecraft;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 
-public class ExampleMod implements ClientModInitializer {
+public class ExampleMod implements ModInitializer {
     private long lastDay = -1;
     private int goalDay = 500;
     private String normalSoundId = "minecraft:block.note_block.chime";
     private String milestoneSoundId = "minecraft:entity.wither.spawn";
 
     @Override
-    public void onInitializeClient() {
+    public void onInitialize() {
         loadConfig();
 
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (client.level != null && client.player != null) {
-                long currentDay = client.level.getDayTime() / 24000;
+        // Listens to the internal game clock safely from the server side
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (server.overworld() != null) {
+                long currentDay = server.overworld().getDayTime() / 24000;
 
                 if (lastDay == -1) {
                     lastDay = currentDay;
                     return;
                 }
 
-                if (currentDay > lastDay) {
+                boolean dayChanged = currentDay > lastDay;
+                if (dayChanged) {
                     lastDay = currentDay;
-                    triggerDayNotification(client, currentDay);
                 }
 
-                // Persistent Action Bar Tracker (Displays safely right above your hotbar)
-                String trackerText = "Day: " + currentDay + " / " + goalDay;
-                ChatFormatting color = (currentDay >= goalDay) ? ChatFormatting.GREEN : ChatFormatting.GOLD;
-                client.player.displayClientMessage(Component.literal(trackerText).withStyle(color), true);
+                // Sends the tracking data to every active player in the world
+                for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                    if (dayChanged) {
+                        triggerDayNotification(player, currentDay);
+                    }
+
+                    // Persistent Action Bar Tracker (displays smoothly right above your health bar)
+                    String trackerText = "Day: " + currentDay + " / " + goalDay;
+                    ChatFormatting color = (currentDay >= goalDay) ? ChatFormatting.GREEN : ChatFormatting.GOLD;
+                    player.displayClientMessage(Component.literal(trackerText).withStyle(color), true);
+                }
             }
         });
     }
 
-    private void triggerDayNotification(Minecraft client, long day) {
+    private void triggerDayNotification(ServerPlayer player, long day) {
         Component titleText;
         Component subtitleText;
         String soundToPlay = normalSoundId;
@@ -61,20 +72,19 @@ public class ExampleMod implements ClientModInitializer {
             subtitleText = Component.literal("Keep surviving...").withStyle(ChatFormatting.GRAY);
         }
 
-        if (client.gui != null) {
-            client.gui.setTitle(titleText);
-            client.gui.setSubtitle(subtitleText);
-            client.gui.setTimes(10, 70, 20);
-        }
+        // Sends the title screens directly to the player's client via safe network packets
+        player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
+        player.connection.send(new ClientboundSetTitleTextPacket(titleText));
+        player.connection.send(new ClientboundSetSubtitleTextPacket(subtitleText));
 
         try {
-            client.level.playLocalSound(
-                client.player.getX(), client.player.getY(), client.player.getZ(),
+            player.level().playSound(
+                null, player.getX(), player.getY(), player.getZ(),
                 BuiltInRegistries.SOUND_EVENT.get(ResourceLocation.tryParse(soundToPlay)),
-                SoundSource.AMBIENT, 1.0f, 1.0f, false
+                SoundSource.AMBIENT, 1.0f, 1.0f
             );
         } catch (Exception e) {
-            client.player.displayClientMessage(Component.literal("Invalid custom sound ID in config!").withStyle(ChatFormatting.RED), false);
+            player.displayClientMessage(Component.literal("Invalid custom sound ID in config!").withStyle(ChatFormatting.RED), false);
         }
     }
 
